@@ -27,10 +27,10 @@ func main() {
 		return
 	}
 
-	loss := ml.Test(model, dataSet, func(example ml.Example, prediction float64) {
-		fmt.Printf("%.03f,%.03f\n", example.Label, prediction)
+	acuracy := ml.Test(model, dataSet, func(example ml.Example, prediction float64) {
+		fmt.Printf("Word: %s , Label %.03f, Prediction: %.03f\n", example.Word, example.Label, prediction)
 	})
 
-	fmt.Printf("\nLoss: %.03f\n", loss)
+	fmt.Printf("\nAccuracy: %.03f%%\n", acuracy)
 
 }
