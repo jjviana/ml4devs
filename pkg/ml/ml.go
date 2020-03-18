@@ -15,8 +15,10 @@ import (
 //A linear model is of the form:
 // y = c0*dfeature[0]+c1*feature[1]+...+cN*feature[n] + bias
 type Model struct {
-	Bias        float64
-	Coeficients []float64
+	Bias             float64
+	Coeficients      []float64
+	MinFeatureValues []float64
+	MaxFeatureValues []float64
 }
 
 //Example is a single data point consisting of a feature set and a label
@@ -25,8 +27,8 @@ type Example struct {
 	Label    float64
 }
 
-//ReadDataSet reads a CSV dataset
-func ReadDataSet(fileName string) ([]Example, error) {
+//ReadCSVDataSet reads a CSV dataset
+func ReadCSVDataSet(fileName string) ([]Example, error) {
 	inputFile, err := os.Open(fileName)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file %s: %w", fileName, err)
@@ -77,7 +79,13 @@ func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error
 
 	//Assumes the dataset has been normalized
 
-	model := Model{Coeficients: make([]float64, len(dataSet[0].Features))}
+	min, max, err := NormalizeDataSetFeatures(dataSet)
+
+	if err != nil {
+		return Model{}, fmt.Errorf("error normalizing dataset: %w", err)
+	}
+	model := Model{Coeficients: make([]float64, len(dataSet[0].Features)),
+		MinFeatureValues: min, MaxFeatureValues: max}
 
 	for epoch := 0; epoch < numEpochs; epoch++ {
 
@@ -104,11 +112,13 @@ func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error
 
 }
 
-//NormalizeDataSet normalize the features in the dataset
-func NormalizeDataSet(dataSet []Example) error {
+//NormalizeDataSetFeatures normalize the features in the dataset
+//Returns two arays containing the minimum and the maximum value of each feature
+//(for future use during inference)
+func NormalizeDataSetFeatures(dataSet []Example) ([]float64, []float64, error) {
 
 	if len(dataSet) < 1 {
-		return fmt.Errorf("empty data set")
+		return nil, nil, fmt.Errorf("empty data set")
 	}
 	//Assumes all examples have the same number of features
 	maxValues := make([]float64, len(dataSet[0].Features))
@@ -124,7 +134,7 @@ func NormalizeDataSet(dataSet []Example) error {
 	//Find min and max
 	for i := 0; i < len(dataSet); i++ {
 		if len(dataSet[i].Features) < len(maxValues) {
-			return fmt.Errorf("expected %d features, found %d ", len(maxValues), len(dataSet[i].Features))
+			return nil, nil, fmt.Errorf("expected %d features, found %d ", len(maxValues), len(dataSet[i].Features))
 		}
 		for j := 0; j < len(maxValues); j++ {
 			maxValues[j] = math.Max(maxValues[j], dataSet[i].Features[j])
@@ -134,15 +144,20 @@ func NormalizeDataSet(dataSet []Example) error {
 
 	//Normalize by min and max
 
+	NormalizeDatasetFeaturesWithLimits(dataSet, maxValues, minValues)
+
+	return minValues, maxValues, nil
+
+}
+
+//NormalizeDatasetFeaturesWithLimits normalizes the data set features in place, with the provided minimum and maximum feature lengths
+func NormalizeDatasetFeaturesWithLimits(dataSet []Example, maxValues []float64, minValues []float64) {
 	for i := 0; i < len(dataSet); i++ {
 		for j := 0; j < len(maxValues); j++ {
 			dataSet[i].Features[j] = (dataSet[i].Features[j] - minValues[j]) / (maxValues[j] - minValues[j])
 		}
 
 	}
-
-	return nil
-
 }
 
 //Predict makes a prediction for a single example,
@@ -167,5 +182,41 @@ func SaveModel(model Model, fileName string) error {
 	}
 
 	return ioutil.WriteFile(fileName, content, 0644)
+
+}
+
+//LoadModel loads a model from a file
+func LoadModel(fileName string) (Model, error) {
+
+	model := Model{}
+	content, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return model, err
+	}
+
+	err = json.Unmarshal(content, &model)
+
+	return model, err
+
+}
+
+type testListener func(Example, float64)
+
+//Test tests the provided model in the provided dataset, returning the loss
+func Test(model Model, dataSet []Example, listener testListener) float64 {
+
+	NormalizeDatasetFeaturesWithLimits(dataSet, model.MaxFeatureValues, model.MinFeatureValues)
+	//Assuming loss is RMSE
+
+	sumError := 0.0
+	for _, example := range dataSet {
+		prediction := Predict(model, example)
+		error := prediction - example.Label
+		sumError += error * error
+		listener(example, prediction)
+
+	}
+
+	return math.Sqrt(sumError / float64(len(dataSet)))
 
 }

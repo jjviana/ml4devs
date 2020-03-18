@@ -15,15 +15,13 @@ func main() {
 	}
 	trainingFileName := os.Args[1]
 
-	dataSet, err := ml.ReadDataSet(trainingFileName)
+	dataSet, err := ml.ReadCSVDataSet(trainingFileName)
 	if err != nil {
 		fmt.Printf("Error reading dataset: %s \n", err)
 		return
 	}
 
 	fmt.Printf("Read %d training examples\n", len(dataSet))
-
-	ml.NormalizeDataSet(dataSet)
 
 	model, err := ml.Train(dataSet, learningRate, numEpochs)
 
