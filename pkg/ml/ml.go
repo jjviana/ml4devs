@@ -4,11 +4,14 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"hash"
+	"hash/fnv"
 	"io"
 	"io/ioutil"
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"unicode"
 
 	"golang.org/x/text/transform"
@@ -25,28 +28,24 @@ type Model struct {
 
 //Example is a single data point consisting of a feature set and a label
 type Example struct {
-	Word     string
-	Features []float64
+	Sentence string
+	Features []uint32
 	Label    float64
 }
 
-const MAX_WORD_LENGTH = 10
+var HashTableSize = uint32(math.Pow(2, 21))
 
-//EncodeOneHot returns a one-hot-encoded version of the input word.
-//If the length of the word is less than MAX_WORD_LENGTH, the returned value is zero-padded to MAX_WORD_LENGTH
-//otherwise, the word is truncated as MAX_WORD_LENGTH
-//It will also only represent printable characters (in the range 0-127) and will replace accented characters with the
-//corresponding unaccented version
-func EncodeOneHot(word string) ([]float64, error) {
+//FeatureHash takes a sentence and returns a representation of it based on the hashing trick.
+//It uses the provided hash function and return a float64 slice of size HashTableSize
+func FeatureHash(features []string, hash hash.Hash32) ([]uint32, error) {
 
-	word, err := normalizeWord(word)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]float64, 128*MAX_WORD_LENGTH)
+	result := make([]uint32, 0)
 
-	for i := 0; i < MAX_WORD_LENGTH && i < len(word); i++ {
-		result[i*128+int(word[i])] = 1.0
+	for _, feature := range features {
+		hash.Reset()
+		hash.Write([]byte(feature))
+		index := hash.Sum32() % HashTableSize
+		result = append(result, index)
 	}
 	return result, nil
 }
@@ -61,9 +60,14 @@ func ReadCSVDataSet(fileName string) ([]Example, error) {
 	reader.Comma = ','
 	var example Example
 
+	//Ignore first line (header)
+
 	record, err := reader.Read()
 
+	record, err = reader.Read()
+
 	dataSet := make([]Example, 0)
+	hashFunction := fnv.New32a()
 
 	for err == nil {
 
@@ -71,8 +75,8 @@ func ReadCSVDataSet(fileName string) ([]Example, error) {
 			return nil, fmt.Errorf("error: expected 2 values, found %d", len(record))
 
 		}
-		example = Example{Word: record[0]}
-		example.Features, err = EncodeOneHot(record[0])
+		example = Example{Sentence: record[0]}
+		example.Features, err = FeatureHash(strings.Split(example.Sentence, " "), hashFunction)
 		if err != nil {
 			return nil, err
 		}
@@ -80,9 +84,11 @@ func ReadCSVDataSet(fileName string) ([]Example, error) {
 		example.Label, err = strconv.ParseFloat(record[len(record)-1], 64)
 
 		if err != nil {
-			return nil, fmt.Errorf("error parsing label (%s): %w", record[len(record)-1], err)
+			fmt.Printf("Warn: error parsing label (%s): %s (ignoring example)\n", record[len(record)-1], err)
+			err = nil
+		} else {
+			dataSet = append(dataSet, example)
 		}
-		dataSet = append(dataSet, example)
 
 		record, err = reader.Read()
 	}
@@ -99,19 +105,20 @@ func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error
 
 	//Assumes the dataset has been normalized
 
-	model := Model{Coeficients: make([]float64, len(dataSet[0].Features))}
+	model := Model{Coeficients: make([]float64, HashTableSize)}
 
 	for epoch := 0; epoch < numEpochs; epoch++ {
 
 		sumError := 0.0
 		for i := 0; i < len(dataSet); i++ {
-			prediction := Predict(model, dataSet[i])
+			example := &dataSet[i]
+			prediction := Predict(model, example)
 			error := prediction - dataSet[i].Label
 			sumError += error * error
 			model.Bias -= learningRate * error
 
-			for j := 0; j < len(model.Coeficients); j++ {
-				model.Coeficients[j] -= learningRate * error * dataSet[i].Features[j]
+			for j := 0; j < len(example.Features); j++ {
+				model.Coeficients[example.Features[j]] -= learningRate * error
 
 			}
 
@@ -128,12 +135,12 @@ func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error
 
 //Predict makes a prediction for a single example,
 //given a model.
-func Predict(model Model, example Example) float64 {
+func Predict(model Model, example *Example) float64 {
 
 	result := model.Bias
 
 	for i := 0; i < len(example.Features); i++ {
-		result += model.Coeficients[i] * example.Features[i]
+		result += model.Coeficients[example.Features[i]]
 	}
 	return result
 
@@ -173,15 +180,15 @@ func Test(model Model, dataSet []Example, listener testListener) float64 {
 
 	correct := 0.0
 	for _, example := range dataSet {
-		prediction := Predict(model, example)
+		prediction := Predict(model, &example)
 		// Since this is a classification problem, we will consider the treshold 0.5
 		// (even though our loss function does not yet interprets the model output as probability)
 
-		classification_prediction := 0.0
+		classificationPrediction := 0.0
 		if prediction > 0.5 {
-			classification_prediction = 1.0
+			classificationPrediction = 1.0
 		}
-		if classification_prediction == example.Label {
+		if classificationPrediction == example.Label {
 			correct = correct + 1
 		}
 		listener(example, prediction)
