@@ -9,22 +9,46 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"unicode"
+
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 //Model is the Machine Learning model we are trying to learn
 //A linear model is of the form:
 // y = c0*dfeature[0]+c1*feature[1]+...+cN*feature[n] + bias
 type Model struct {
-	Bias             float64
-	Coeficients      []float64
-	MinFeatureValues []float64
-	MaxFeatureValues []float64
+	Bias        float64
+	Coeficients []float64
 }
 
 //Example is a single data point consisting of a feature set and a label
 type Example struct {
+	Word     string
 	Features []float64
 	Label    float64
+}
+
+const MAX_WORD_LENGTH = 10
+
+//EncodeOneHot returns a one-hot-encoded version of the input word.
+//If the length of the word is less than MAX_WORD_LENGTH, the returned value is zero-padded to MAX_WORD_LENGTH
+//otherwise, the word is truncated as MAX_WORD_LENGTH
+//It will also only represent printable characters (in the range 0-127) and will replace accented characters with the
+//corresponding unaccented version
+func EncodeOneHot(word string) ([]float64, error) {
+
+	word, err := normalizeWord(word)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]float64, 128*MAX_WORD_LENGTH)
+
+	for i := 0; i < MAX_WORD_LENGTH && i < len(word); i++ {
+		result[i*128+int(word[i])] = 1.0
+	}
+	return result, nil
 }
 
 //ReadCSVDataSet reads a CSV dataset
@@ -34,29 +58,25 @@ func ReadCSVDataSet(fileName string) ([]Example, error) {
 		return nil, fmt.Errorf("error opening file %s: %w", fileName, err)
 	}
 	reader := csv.NewReader(inputFile)
-	reader.Comma = ';'
+	reader.Comma = ','
 	var example Example
-	//Ignore the first line (header)
-	reader.Read()
+
 	record, err := reader.Read()
 
 	dataSet := make([]Example, 0)
+
 	for err == nil {
 
-		if len(record) < 10 {
-			return nil, fmt.Errorf("error: expected 10 values, found %d", len(record))
+		if len(record) < 2 {
+			return nil, fmt.Errorf("error: expected 2 values, found %d", len(record))
 
 		}
-		example = Example{Features: make([]float64, len(record)-1)}
-
-		for i := 0; i < len(example.Features); i++ {
-			example.Features[i], err = strconv.ParseFloat(record[i], 64)
-			if err != nil {
-				return nil, fmt.Errorf("Error parsing feature value (%s): %w ", record[i], err)
-
-			}
-
+		example = Example{Word: record[0]}
+		example.Features, err = EncodeOneHot(record[0])
+		if err != nil {
+			return nil, err
 		}
+
 		example.Label, err = strconv.ParseFloat(record[len(record)-1], 64)
 
 		if err != nil {
@@ -79,13 +99,7 @@ func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error
 
 	//Assumes the dataset has been normalized
 
-	min, max, err := NormalizeDataSetFeatures(dataSet)
-
-	if err != nil {
-		return Model{}, fmt.Errorf("error normalizing dataset: %w", err)
-	}
-	model := Model{Coeficients: make([]float64, len(dataSet[0].Features)),
-		MinFeatureValues: min, MaxFeatureValues: max}
+	model := Model{Coeficients: make([]float64, len(dataSet[0].Features))}
 
 	for epoch := 0; epoch < numEpochs; epoch++ {
 
@@ -110,54 +124,6 @@ func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error
 
 	return model, nil
 
-}
-
-//NormalizeDataSetFeatures normalize the features in the dataset
-//Returns two arays containing the minimum and the maximum value of each feature
-//(for future use during inference)
-func NormalizeDataSetFeatures(dataSet []Example) ([]float64, []float64, error) {
-
-	if len(dataSet) < 1 {
-		return nil, nil, fmt.Errorf("empty data set")
-	}
-	//Assumes all examples have the same number of features
-	maxValues := make([]float64, len(dataSet[0].Features))
-	minValues := make([]float64, len(dataSet[0].Features))
-
-	//Initialize min and max
-	for i := 0; i < len(maxValues); i++ {
-		maxValues[i] = -math.MaxFloat64
-		minValues[i] = math.MaxFloat64
-
-	}
-
-	//Find min and max
-	for i := 0; i < len(dataSet); i++ {
-		if len(dataSet[i].Features) < len(maxValues) {
-			return nil, nil, fmt.Errorf("expected %d features, found %d ", len(maxValues), len(dataSet[i].Features))
-		}
-		for j := 0; j < len(maxValues); j++ {
-			maxValues[j] = math.Max(maxValues[j], dataSet[i].Features[j])
-			minValues[j] = math.Min(minValues[j], dataSet[i].Features[j])
-		}
-	}
-
-	//Normalize by min and max
-
-	NormalizeDatasetFeaturesWithLimits(dataSet, maxValues, minValues)
-
-	return minValues, maxValues, nil
-
-}
-
-//NormalizeDatasetFeaturesWithLimits normalizes the data set features in place, with the provided minimum and maximum feature lengths
-func NormalizeDatasetFeaturesWithLimits(dataSet []Example, maxValues []float64, minValues []float64) {
-	for i := 0; i < len(dataSet); i++ {
-		for j := 0; j < len(maxValues); j++ {
-			dataSet[i].Features[j] = (dataSet[i].Features[j] - minValues[j]) / (maxValues[j] - minValues[j])
-		}
-
-	}
 }
 
 //Predict makes a prediction for a single example,
@@ -205,18 +171,36 @@ type testListener func(Example, float64)
 //Test tests the provided model in the provided dataset, returning the loss
 func Test(model Model, dataSet []Example, listener testListener) float64 {
 
-	NormalizeDatasetFeaturesWithLimits(dataSet, model.MaxFeatureValues, model.MinFeatureValues)
-	//Assuming loss is RMSE
-
-	sumError := 0.0
+	correct := 0.0
 	for _, example := range dataSet {
 		prediction := Predict(model, example)
-		error := prediction - example.Label
-		sumError += error * error
+		// Since this is a classification problem, we will consider the treshold 0.5
+		// (even though our loss function does not yet interprets the model output as probability)
+
+		classification_prediction := 0.0
+		if prediction > 0.5 {
+			classification_prediction = 1.0
+		}
+		if classification_prediction == example.Label {
+			correct = correct + 1
+		}
 		listener(example, prediction)
 
 	}
 
-	return math.Sqrt(sumError / float64(len(dataSet)))
+	return correct / float64(len(dataSet))
 
+}
+func isMn(r rune) bool {
+	return unicode.Is(unicode.Mn, r) // Mn: nonspacing marks
+}
+
+func normalizeWord(word string) (string, error) {
+	t := transform.Chain(norm.NFD, transform.RemoveFunc(isMn), norm.NFC)
+	result, _, err := transform.String(t, word)
+
+	if err != nil {
+		return "", fmt.Errorf("error normalizing word %s: $w", word, err)
+	}
+	return result, nil
 }
