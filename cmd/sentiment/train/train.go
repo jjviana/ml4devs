@@ -3,19 +3,29 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/jjviana/ml4devs/pkg/ml"
 )
 
 func main() {
 
-	if len(os.Args) != 3 {
-		fmt.Printf("Usage: sentiment <training file> <output file> \n")
+	if len(os.Args) < 3 {
+		fmt.Printf("Usage: sentiment <training file> <output file> [-ngrams N] \n")
 		return
 	}
 	trainingFileName := os.Args[1]
+	ngrams := 0
+	if len(os.Args) == 5 && os.Args[3] == "-ngrams" {
+		n, err := strconv.ParseInt(os.Args[4], 10, 32)
+		if err != nil {
+			fmt.Printf("Erro parsing ngrams: %s \n ", err)
+			return
+		}
+		ngrams = int(n)
+	}
 
-	dataSet, err := ml.ReadCSVDataSet(trainingFileName)
+	dataSet, err := ml.ReadCSVDataSet(trainingFileName, ngrams)
 	if err != nil {
 		fmt.Printf("Error reading dataset: %s \n", err)
 		return
@@ -23,7 +33,7 @@ func main() {
 
 	fmt.Printf("Read %d training examples\n", len(dataSet))
 
-	model, err := ml.Train(dataSet, learningRate, numEpochs)
+	model, err := ml.Train(dataSet, learningRate, numEpochs, ngrams)
 
 	if err != nil {
 		fmt.Printf("Error in training: %s ", err)
@@ -48,4 +58,4 @@ func printDataSet(dataSet []ml.Example) {
 }
 
 const numEpochs = 1000
-const learningRate = 0.00001
+const learningRate = 0.000001

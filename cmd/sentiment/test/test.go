@@ -21,7 +21,7 @@ func main() {
 	}
 
 	datasetFile := os.Args[2]
-	dataSet, err := ml.ReadCSVDataSet(datasetFile)
+	dataSet, err := ml.ReadCSVDataSet(datasetFile, model.Ngrams)
 	if err != nil {
 		fmt.Printf("Error loading dataset: %s\n", err)
 		return

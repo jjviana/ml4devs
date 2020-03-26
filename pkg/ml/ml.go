@@ -24,6 +24,7 @@ import (
 type Model struct {
 	Bias        float64
 	Coeficients []float64
+	Ngrams      int
 }
 
 //Example is a single data point consisting of a feature set and a label
@@ -50,8 +51,26 @@ func FeatureHash(features []string, hash hash.Hash32) ([]uint32, error) {
 	return result, nil
 }
 
+func makeNgrams(words []string, ngrams int) []string {
+	result := make([]string, 0)
+
+	for i := 0; i < len(words); i++ {
+		feature := words[i]
+		result = append(result, feature)
+		for j := 1; j < ngrams; j++ {
+			if (i + j) < len(words) {
+				feature = feature + "_" + words[i+j]
+				result = append(result, feature)
+			}
+
+		}
+	}
+	return result
+
+}
+
 //ReadCSVDataSet reads a CSV dataset
-func ReadCSVDataSet(fileName string) ([]Example, error) {
+func ReadCSVDataSet(fileName string, ngrams int) ([]Example, error) {
 	inputFile, err := os.Open(fileName)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file %s: %w", fileName, err)
@@ -76,7 +95,11 @@ func ReadCSVDataSet(fileName string) ([]Example, error) {
 
 		}
 		example = Example{Sentence: record[0]}
-		example.Features, err = FeatureHash(strings.Split(example.Sentence, " "), hashFunction)
+		words := strings.Split(example.Sentence, " ")
+		if ngrams > 0 {
+			words = makeNgrams(words, ngrams)
+		}
+		example.Features, err = FeatureHash(words, hashFunction)
 		if err != nil {
 			return nil, err
 		}
@@ -101,11 +124,12 @@ func ReadCSVDataSet(fileName string) ([]Example, error) {
 }
 
 //Train executes the training loop
-func Train(dataSet []Example, learningRate float64, numEpochs int) (Model, error) {
+func Train(dataSet []Example, learningRate float64, numEpochs int, ngrams int) (Model, error) {
 
 	//Assumes the dataset has been normalized
 
-	model := Model{Coeficients: make([]float64, HashTableSize)}
+	model := Model{Coeficients: make([]float64, HashTableSize),
+		Ngrams: ngrams}
 
 	for epoch := 0; epoch < numEpochs; epoch++ {
 
