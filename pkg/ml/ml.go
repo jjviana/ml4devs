@@ -14,6 +14,16 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/nlpodyssey/spago/pkg/ml/nn/stochastic_perceptron"
+
+	"github.com/nlpodyssey/spago/pkg/ml/nn"
+
+	"github.com/nlpodyssey/spago/pkg/ml/optimizers/gd"
+	"github.com/nlpodyssey/spago/pkg/ml/optimizers/gd/sgd"
+
+	"github.com/nlpodyssey/spago/pkg/mat"
+	"github.com/nlpodyssey/spago/pkg/ml/ag"
+
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
@@ -22,33 +32,30 @@ import (
 //A linear model is of the form:
 // y = c0*dfeature[0]+c1*feature[1]+...+cN*feature[n] + bias
 type Model struct {
-	Bias        float64
-	Coeficients []float64
-	Ngrams      int
+	internalModel *stochastic_perceptron.Model
+	Ngrams        int
 }
 
 //Example is a single data point consisting of a feature set and a label
 type Example struct {
 	Sentence string
-	Features []uint32
-	Label    float64
+	Features mat.Matrix
+	Label    mat.Matrix
 }
 
 var HashTableSize = uint32(math.Pow(2, 21))
 
 //FeatureHash takes a sentence and returns a representation of it based on the hashing trick.
 //It uses the provided hash function and return a float64 slice of size HashTableSize
-func FeatureHash(features []string, hash hash.Hash32) ([]uint32, error) {
-
-	result := make([]uint32, 0)
+func FeatureHash(features []string, hash hash.Hash32, out mat.Matrix) {
 
 	for _, feature := range features {
 		hash.Reset()
 		hash.Write([]byte(feature))
 		index := hash.Sum32() % HashTableSize
-		result = append(result, index)
+		out.Set(int(index), 0, 1)
 	}
-	return result, nil
+
 }
 
 func makeNgrams(words []string, ngrams int) []string {
@@ -83,8 +90,6 @@ func ReadCSVDataSet(fileName string, ngrams int) ([]Example, error) {
 
 	record, err := reader.Read()
 
-	record, err = reader.Read()
-
 	dataSet := make([]Example, 0)
 	hashFunction := fnv.New32a()
 
@@ -94,22 +99,21 @@ func ReadCSVDataSet(fileName string, ngrams int) ([]Example, error) {
 			return nil, fmt.Errorf("error: expected 2 values, found %d", len(record))
 
 		}
-		example = Example{Sentence: record[0]}
+		example = Example{Sentence: record[0], Features: mat.NewSparse(int(HashTableSize), 1)}
 		words := strings.Split(example.Sentence, " ")
 		if ngrams > 0 {
 			words = makeNgrams(words, ngrams)
 		}
-		example.Features, err = FeatureHash(words, hashFunction)
-		if err != nil {
-			return nil, err
-		}
+		FeatureHash(words, hashFunction, example.Features)
 
-		example.Label, err = strconv.ParseFloat(record[len(record)-1], 64)
+		var label float64
+		label, err = strconv.ParseFloat(record[len(record)-1], 64)
 
 		if err != nil {
 			fmt.Printf("Warn: error parsing label (%s): %s (ignoring example)\n", record[len(record)-1], err)
 			err = nil
 		} else {
+			example.Label = mat.NewScalar(label)
 			dataSet = append(dataSet, example)
 		}
 
@@ -126,25 +130,26 @@ func ReadCSVDataSet(fileName string, ngrams int) ([]Example, error) {
 //Train executes the training loop
 func Train(dataSet []Example, learningRate float64, numEpochs int, ngrams int) (Model, error) {
 
-	//Assumes the dataset has been normalized
-
-	model := Model{Coeficients: make([]float64, HashTableSize),
+	model := Model{internalModel: stochastic_perceptron.New(int(HashTableSize), 1, 10, ag.OpIdentity),
 		Ngrams: ngrams}
+
+	optimizer := gd.NewOptimizer(sgd.New(sgd.NewConfig(learningRate, 0.0, false)), nil)
+
+	nn.TrackParams(model.internalModel, optimizer)
 
 	for epoch := 0; epoch < numEpochs; epoch++ {
 
 		sumError := 0.0
 		for i := 0; i < len(dataSet); i++ {
 			example := &dataSet[i]
-			prediction := Predict(model, example)
-			error := prediction - dataSet[i].Label
-			sumError += error * error
-			model.Bias -= learningRate * error
+			g := ag.NewGraph()
+			x := g.NewVariable(example.Features, false)
+			y := model.internalModel.NewProc(g).Forward(x)[0]
 
-			for j := 0; j < len(example.Features); j++ {
-				model.Coeficients[example.Features[j]] -= learningRate * error
-
-			}
+			error := g.Abs(g.Sub(g.NewVariable(example.Label, false), y))
+			g.Backward(error)
+			optimizer.Optimize()
+			sumError += error.ScalarValue() * error.ScalarValue()
 
 		}
 
@@ -159,7 +164,7 @@ func Train(dataSet []Example, learningRate float64, numEpochs int, ngrams int) (
 
 //Predict makes a prediction for a single example,
 //given a model.
-func Predict(model Model, example *Example) float64 {
+/*func Predict(model Model, example *Example) float64 {
 
 	result := model.Bias
 
@@ -168,7 +173,7 @@ func Predict(model Model, example *Example) float64 {
 	}
 	return result
 
-}
+}*/
 
 //SaveModel saves a model to a file in JSON format.
 func SaveModel(model Model, fileName string) error {
@@ -204,17 +209,21 @@ func Test(model Model, dataSet []Example, listener testListener) float64 {
 
 	correct := 0.0
 	for _, example := range dataSet {
-		prediction := Predict(model, &example)
+		//prediction := Predict(model, &example)
+		prediction := 0.0
 		// Since this is a classification problem, we will consider the treshold 0.5
 		// (even though our loss function does not yet interprets the model output as probability)
 
-		classificationPrediction := 0.0
+		/*classificationPrediction := 0.0
 		if prediction > 0.5 {
 			classificationPrediction = 1.0
 		}
-		if classificationPrediction == example.Label {
-			correct = correct + 1
-		}
+		/*
+			if classificationPrediction == example.Label {
+				correct = correct + 1
+			}
+		*/
+
 		listener(example, prediction)
 
 	}

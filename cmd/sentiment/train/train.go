@@ -2,13 +2,26 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"runtime/pprof"
 	"strconv"
 
 	"github.com/jjviana/ml4devs/pkg/ml"
 )
 
 func main() {
+
+	fmt.Printf("CPU profiling enabled\n")
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal("could not create CPU profile: ", err)
+	}
+	defer f.Close() // error handling omitted for example
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
 
 	if len(os.Args) < 3 {
 		fmt.Printf("Usage: sentiment <training file> <output file> [-ngrams N] \n")
@@ -46,16 +59,5 @@ func main() {
 
 }
 
-func printDataSet(dataSet []ml.Example) {
-
-	for i := 0; i < len(dataSet); i++ {
-		for j := 0; j < len(dataSet[i].Features); j++ {
-			fmt.Printf("%.03f ", dataSet[i].Features[j])
-
-		}
-		fmt.Printf("->%.04f\n", dataSet[i].Label)
-	}
-}
-
-const numEpochs = 1000
-const learningRate = 0.000001
+const numEpochs = 10
+const learningRate = 0.001
