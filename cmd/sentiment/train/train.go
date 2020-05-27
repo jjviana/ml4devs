@@ -59,5 +59,5 @@ func main() {
 
 }
 
-const numEpochs = 10
+const numEpochs = 1000
 const learningRate = 0.001

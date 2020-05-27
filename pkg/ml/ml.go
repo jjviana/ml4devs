@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/nlpodyssey/spago/pkg/ml/nn/stochastic_perceptron"
+	"github.com/nlpodyssey/spago/pkg/ml/nn/sparse_stochastic_linear"
 
 	"github.com/nlpodyssey/spago/pkg/ml/nn"
 
@@ -32,7 +32,7 @@ import (
 //A linear model is of the form:
 // y = c0*dfeature[0]+c1*feature[1]+...+cN*feature[n] + bias
 type Model struct {
-	internalModel *stochastic_perceptron.Model
+	internalModel *sparse_stochastic_linear.Model
 	Ngrams        int
 }
 
@@ -130,12 +130,12 @@ func ReadCSVDataSet(fileName string, ngrams int) ([]Example, error) {
 //Train executes the training loop
 func Train(dataSet []Example, learningRate float64, numEpochs int, ngrams int) (Model, error) {
 
-	model := Model{internalModel: stochastic_perceptron.New(int(HashTableSize), 1, 10, ag.OpIdentity),
+	model := Model{internalModel: sparse_stochastic_linear.New(int(HashTableSize), 1, 10, 1),
 		Ngrams: ngrams}
 
-	optimizer := gd.NewOptimizer(sgd.New(sgd.NewConfig(learningRate, 0.0, false)), nil)
+	optimizer := gd.NewOptimizer(sgd.New(sgd.NewConfig(learningRate, 0.0, false)))
 
-	nn.TrackParams(model.internalModel, optimizer)
+	nn.TrackParamsForOptimization(model.internalModel, optimizer)
 
 	for epoch := 0; epoch < numEpochs; epoch++ {
 
