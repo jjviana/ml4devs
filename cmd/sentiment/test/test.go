@@ -28,7 +28,7 @@ func main() {
 	}
 
 	acuracy := ml.Test(model, dataSet, func(example ml.Example, prediction float64) {
-		fmt.Printf("Sentence: %s , Label %.03f, Prediction: %.03f\n", example.Sentence, example.Label, prediction)
+		fmt.Printf("\nSentence: %s , Label %.03f, Prediction: %.03f\n", example.Sentence, example.Label, prediction)
 	})
 
 	fmt.Printf("\nAccuracy: %.03f%%\n", 100*acuracy)
