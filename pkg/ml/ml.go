@@ -138,18 +138,19 @@ func Train(dataSet []Example, learningRate float64, numEpochs int, ngrams int) (
 			example := &dataSet[i]
 			prediction := Predict(model, example)
 			error := prediction - dataSet[i].Label
-			sumError += error * error
-			model.Bias -= learningRate * error
+			errorWRTx := prediction * (1 - prediction)
+			sumError += error
+			gradient := learningRate * error * errorWRTx
+			model.Bias -= gradient
 
 			for j := 0; j < len(example.Features); j++ {
-				model.Coeficients[example.Features[j]] -= learningRate * error
-
+				model.Coeficients[example.Features[j]] -= gradient
 			}
 
 		}
 
-		loss := math.Sqrt(sumError / float64(len(dataSet)))
-		fmt.Printf("Epoch %d error %.3f\n", epoch, loss)
+		loss := sumError / float64(len(dataSet))
+		fmt.Printf("Epoch %d error %.6f\n", epoch, loss)
 
 	}
 
@@ -166,8 +167,13 @@ func Predict(model Model, example *Example) float64 {
 	for i := 0; i < len(example.Features); i++ {
 		result += model.Coeficients[example.Features[i]]
 	}
-	return result
 
+	return sigmoid(result)
+
+}
+
+func sigmoid(x float64) float64 {
+	return 1.0 / (1.0 + math.Exp(-x))
 }
 
 //SaveModel saves a model to a file in JSON format.
