@@ -58,4 +58,4 @@ func printDataSet(dataSet []ml.Example) {
 }
 
 const numEpochs = 1000
-const learningRate = 0.000001
+const learningRate = 0.001
